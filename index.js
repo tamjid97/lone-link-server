@@ -1,23 +1,27 @@
 const express = require("express");
 const cors = require("cors");
 require("dotenv").config();
-const { MongoClient, ServerApiVersion } = require("mongodb");
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 
 const app = express();
 const port = process.env.PORT || 3000;
 
-// middleware
+// Middleware
 app.use(express.json());
 app.use(cors());
 
+// MongoDB URI
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.6gvvest.mongodb.net/?appName=Cluster0`;
 
+// MongoClient with TLS fix for development
 const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
     strict: true,
     deprecationErrors: true,
   },
+  tls: true,
+  tlsAllowInvalidCertificates: true, // ✅ ONLY FOR DEVELOPMENT
 });
 
 async function run() {
@@ -26,30 +30,51 @@ async function run() {
     console.log("✅ MongoDB connected successfully!");
 
     const db = client.db("loneLinkDB");
-    const loneCollection = db.collection("lone");
+    const loanCollection = db.collection("loans");
+    const applicationCollection = db.collection("loanApplications");
 
-    // GET all loans
-    app.get("/lone", async (req, res) => {
+    // ---------------------------------------------
+    // 1️⃣ GET all loans
+    app.get("/loan", async (req, res) => {
+      const result = await loanCollection.find().toArray();
+      res.send(result);
+    });
+
+    // ---------------------------------------------
+    // 2️⃣ GET single loan by ID
+    app.get("/loan/:id", async (req, res) => {
+      const { id } = req.params;
       try {
-        const result = await loneCollection.find().toArray();
-        res.send(result);
+        const loan = await loanCollection.findOne({ _id: new ObjectId(id) });
+        if (!loan) return res.status(404).send({ message: "Loan not found" });
+        res.send(loan);
       } catch (err) {
-        res.status(500).send({ message: err.message });
+        console.error(err);
+        res.status(500).send({ message: "Server error" });
       }
     });
 
-    // POST add loan
-    app.post("/lone", async (req, res) => {
+    // ---------------------------------------------
+    // 3️⃣ POST add new loan
+    app.post("/loan", async (req, res) => {
+      const loan = req.body;
+      const result = await loanCollection.insertOne(loan);
+      res.send(result);
+    });
+
+    // ---------------------------------------------
+    // 4️⃣ POST submit loan application
+    app.post("/loan-application", async (req, res) => {
+      const application = req.body;
       try {
-        const lone = req.body;
-        const result = await loneCollection.insertOne(lone);
-        res.send(result);
+        const result = await applicationCollection.insertOne(application);
+        res.status(201).send(result);
       } catch (err) {
-        res.status(500).send({ message: err.message });
+        console.error(err);
+        res.status(500).send({ error: "Failed to submit loan application" });
       }
     });
 
-    // Ping
     await client.db("admin").command({ ping: 1 });
     console.log("Pinged your deployment.");
   } catch (err) {
@@ -57,13 +82,14 @@ async function run() {
   }
 }
 
-// call run
 run().catch(console.dir);
 
+// Root route
 app.get("/", (req, res) => {
   res.send("loan-link is running");
 });
 
+// Start server
 app.listen(port, () => {
   console.log(`🚀 Server running on port ${port}`);
 });

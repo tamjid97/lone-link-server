@@ -105,6 +105,36 @@ async function run() {
       }
     });
 
+// =====================
+// UPDATE USER ROLE (ADMIN)
+// =====================
+app.patch("/users/role/:id", async (req, res) => {
+  try {
+    const { role } = req.body;
+
+    // only allow user or manager
+    if (!["user", "manager"].includes(role)) {
+      return res.status(400).send({ message: "Invalid role" });
+    }
+
+    const result = await usersCollection.updateOne(
+      { _id: new ObjectId(req.params.id) },
+      { $set: { role } }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).send({ message: "User not found" });
+    }
+
+    res.send({ success: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).send({ message: "Failed to update role" });
+  }
+});
+
+
+
     // =====================
     // LOAN ROUTES
     // =====================

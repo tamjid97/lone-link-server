@@ -4,6 +4,10 @@ const cors = require("cors");
 require("dotenv").config();
 const { MongoClient, ObjectId, ServerApiVersion } = require("mongodb");
 
+const stripe = require('stripe')(process.env.STRIPE_SECRET);
+
+
+
 const app = express();
 const port = process.env.PORT || 3000;
 
@@ -46,6 +50,53 @@ async function run() {
       const user = await usersCollection.findOne({ email });
       res.send({ role: user?.role || "user" });
     });
+
+
+    // payment api
+    app.post('/create-checkout-session', async (req, res) => {
+      const paymentInfo = req.body;
+
+      const session = await stripe.checkout.sessions.create({
+            line_items: [
+      {
+        // Provide the exact Price ID (for example, price_1234) of the product you want to sell
+        price_data: {
+          currency: 'USD',
+          unit_amount: 1000,
+          product_data:{
+            name: paymentInfo.loneName
+          }
+        },
+        quantity: 1,
+      },
+    ],
+    customer_email: paymentInfo.senderEmail, 
+    mode: 'payment',
+    metadata:{
+      loneId: paymentInfo.loneId
+    },
+    success_url: `${process.env.SITE_DOMAIN}/dashboard/payment-success`,
+    cancel_url: `${process.env.SITE_DOMAIN}/dashboard/payment-cancelled`,
+  });
+
+  console.log(session);
+  res.send({url:session.url})
+      })
+    
+app.get('/loan-application/:id', async (req, res) => {
+  const { id } = req.params;
+
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).send({ message: "Invalid ID" });
+  }
+
+  const result = await applicationCollection.findOne({
+    _id: new ObjectId(id),
+  });
+
+  res.send(result);
+});
+
 
     // ----------------------
     // LOAN ROUTES
@@ -293,6 +344,15 @@ app.post("/loan", async (req, res) => {
   }
 });
 
+
+// pa buttone -------------------------------------
+
+app.get('/loan-application/:id', async (req, res) => {
+  const id = req.params.id;
+  const query = {_id: new Object(id)}
+  const result = await applicationCollection.findOne(query);
+  res.send(result);
+})
 
     // Cancel loan
     app.patch("/loan-application/cancel/:id", async (req, res) => {

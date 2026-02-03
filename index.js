@@ -1,28 +1,31 @@
-// server.js
+ // server.js
 const express = require("express");
 const cors = require("cors");
 require("dotenv").config();
 const { MongoClient, ObjectId, ServerApiVersion } = require("mongodb");
+
 const stripe = require("stripe")(process.env.STRIPE_SECRET);
 
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Decode Firebase key safely
-const decoded = Buffer.from(process.env.FB_SERVICE_KEY, "base64").toString("utf8");
+// const serviceAccount = require("./firebase-admin-key.json");
+
+const decoded = Buffer.from(process.env.FB_SERVICE_KEY, "base64").toString(
+  "utf8",
+);
 const serviceAccount = JSON.parse(decoded);
 
 // --------------------
 // Middleware
 // --------------------
-// Allow requests from localhost (dev) and your live frontend
+app.use(express.json());
 app.use(
   cors({
-    origin: ["http://localhost:5173", "https://lonelink-d3167.web.app"],
+    origin: ["http://localhost:5173"],
     credentials: true,
-  })
+  }),
 );
-app.use(express.json());
 
 // --------------------
 // MongoDB Setup
@@ -57,15 +60,14 @@ async function run() {
       res.send({ role: user?.role || "user" });
     });
 
-    // ----------------------
-    // PAYMENT ROUTE
-    // ----------------------
+    // payment api
     app.post("/create-checkout-session", async (req, res) => {
       const paymentInfo = req.body;
 
       const session = await stripe.checkout.sessions.create({
         line_items: [
           {
+            // Provide the exact Price ID (for example, price_1234) of the product you want to sell
             price_data: {
               currency: "USD",
               unit_amount: 1000,
@@ -78,12 +80,29 @@ async function run() {
         ],
         customer_email: paymentInfo.senderEmail,
         mode: "payment",
-        metadata: { loneId: paymentInfo.loneId },
+        metadata: {
+          loneId: paymentInfo.loneId,
+        },
         success_url: `${process.env.SITE_DOMAIN}/dashboard/payment-success`,
         cancel_url: `${process.env.SITE_DOMAIN}/dashboard/payment-cancelled`,
       });
 
+      console.log(session);
       res.send({ url: session.url });
+    });
+
+    app.get("/loan-application/:id", async (req, res) => {
+      const { id } = req.params;
+
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({ message: "Invalid ID" });
+      }
+
+      const result = await applicationCollection.findOne({
+        _id: new ObjectId(id),
+      });
+
+      res.send(result);
     });
 
     // ----------------------
@@ -101,7 +120,8 @@ async function run() {
 
     app.get("/loan/:id", async (req, res) => {
       const { id } = req.params;
-      if (!ObjectId.isValid(id)) return res.status(400).send({ message: "Invalid Loan ID" });
+      if (!ObjectId.isValid(id))
+        return res.status(400).send({ message: "Invalid Loan ID" });
 
       const loan = await loanCollection.findOne({ _id: new ObjectId(id) });
       if (!loan) return res.status(404).send({ message: "Loan not found" });
@@ -111,6 +131,7 @@ async function run() {
     // ----------------------
     // LOAN APPLICATION ROUTES
     // ----------------------
+    // Create application
     app.post("/loan-application", async (req, res) => {
       const application = {
         ...req.body,
@@ -122,16 +143,18 @@ async function run() {
       res.send(result);
     });
 
+    // Get applications (filter by email + status)
     app.get("/loan-applications", async (req, res) => {
       const query = {};
       if (req.query.email) query.userEmail = req.query.email.toLowerCase();
       if (req.query.status) query.status = req.query.status;
+
       const result = await applicationCollection.find(query).toArray();
       res.send(result);
     });
 
     // ----------------------
-    // ADMIN ROUTES
+    // GET ALL USERS (Admin)
     // ----------------------
     app.get("/users", async (req, res) => {
       try {
@@ -143,13 +166,21 @@ async function run() {
       }
     });
 
+    // Suspend a user (admin action)
     app.patch("/users/suspend/:id", async (req, res) => {
       const { id } = req.params;
-      if (!ObjectId.isValid(id)) return res.status(400).send({ message: "Invalid user ID" });
+      if (!ObjectId.isValid(id))
+        return res.status(400).send({ message: "Invalid user ID" });
 
       try {
-        const result = await usersCollection.updateOne({ _id: new ObjectId(id) }, { $set: { suspended: true } });
-        if (result.matchedCount === 0) return res.status(404).send({ message: "User not found" });
+        const result = await usersCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { suspended: true } },
+        );
+
+        if (result.matchedCount === 0)
+          return res.status(404).send({ message: "User not found" });
+
         res.send({ message: "User suspended successfully" });
       } catch (err) {
         console.error(err);
@@ -157,15 +188,24 @@ async function run() {
       }
     });
 
+    // Update user role
     app.patch("/users/role/:id", async (req, res) => {
       const { id } = req.params;
       const { role } = req.body;
-      if (!ObjectId.isValid(id)) return res.status(400).send({ message: "Invalid user ID" });
+
+      if (!ObjectId.isValid(id))
+        return res.status(400).send({ message: "Invalid user ID" });
       if (!role) return res.status(400).send({ message: "Role is required" });
 
       try {
-        const result = await usersCollection.updateOne({ _id: new ObjectId(id) }, { $set: { role } });
-        if (result.matchedCount === 0) return res.status(404).send({ message: "User not found" });
+        const result = await usersCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { role } },
+        );
+
+        if (result.matchedCount === 0)
+          return res.status(404).send({ message: "User not found" });
+
         res.send({ message: `User role updated to ${role}` });
       } catch (err) {
         console.error(err);
@@ -173,13 +213,185 @@ async function run() {
       }
     });
 
-    // Root
-    app.get("/", (req, res) => res.send("🚀 LoanLink Server Running"));
+    // Admin sees all applications
+    app.get("/loan-applications/all", async (req, res) => {
+      const applications = await applicationCollection
+        .aggregate([
+          {
+            $lookup: {
+              from: "users",
+              localField: "userEmail",
+              foreignField: "email",
+              as: "userInfo",
+            },
+          },
+          { $unwind: { path: "$userInfo", preserveNullAndEmptyArrays: true } },
+        ])
+        .toArray();
+
+      const mapped = applications.map((app) => ({
+        ...app,
+        userName:
+          app.userInfo?.name || `${app.firstName || ""} ${app.lastName || ""}`,
+      }));
+
+      res.send(mapped);
+    });
+
+    // Approve loan
+    app.patch("/loan-application/:id/approve", async (req, res) => {
+      const { id } = req.params;
+      if (!ObjectId.isValid(id))
+        return res.status(400).send({ message: "Invalid ID" });
+
+      const result = await applicationCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: { status: "Approved", approvedAt: new Date() } },
+      );
+
+      if (result.matchedCount === 0)
+        return res.status(404).send({ message: "Application not found" });
+
+      res.send({ message: "Application approved successfully" });
+    });
+
+    // Reject loan
+    app.patch("/loan-application/:id/reject", async (req, res) => {
+      const { id } = req.params;
+      if (!ObjectId.isValid(id))
+        return res.status(400).send({ message: "Invalid ID" });
+
+      const result = await applicationCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: { status: "Rejected", rejectedAt: new Date() } },
+      );
+
+      if (result.matchedCount === 0)
+        return res.status(404).send({ message: "Application not found" });
+
+      res.send({ message: "Application rejected successfully" });
+    });
+
+    // Update loan info
+    app.put("/loan/:id", async (req, res) => {
+      const { id } = req.params;
+      const updateData = req.body;
+
+      if (!ObjectId.isValid(id))
+        return res.status(400).send({ message: "Invalid Loan ID" });
+
+      try {
+        const result = await loanCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: updateData },
+        );
+
+        if (result.matchedCount === 0)
+          return res.status(404).send({ message: "Loan not found" });
+
+        res.send({ message: "Loan updated successfully" });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ message: "Failed to update loan" });
+      }
+    });
+
+    // Toggle showOnHome
+    app.patch("/loan/show-home/:id", async (req, res) => {
+      const { id } = req.params;
+      const { showOnHome } = req.body;
+
+      if (!ObjectId.isValid(id))
+        return res.status(400).send({ message: "Invalid Loan ID" });
+
+      try {
+        const result = await loanCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { showOnHome } },
+        );
+
+        if (result.matchedCount === 0)
+          return res.status(404).send({ message: "Loan not found" });
+
+        res.send({ message: "Loan showOnHome status updated" });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ message: "Failed to update showOnHome" });
+      }
+    });
+
+    // Delete loan
+    app.delete("/loan/:id", async (req, res) => {
+      const { id } = req.params;
+
+      if (!ObjectId.isValid(id))
+        return res.status(400).send({ message: "Invalid Loan ID" });
+
+      try {
+        const result = await loanCollection.deleteOne({
+          _id: new ObjectId(id),
+        });
+
+        if (result.deletedCount === 0)
+          return res.status(404).send({ message: "Loan not found" });
+
+        res.send({ message: "Loan deleted successfully" });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ message: "Failed to delete loan" });
+      }
+    });
+
+    // Create new loan
+    app.post("/loan", async (req, res) => {
+      const loanData = req.body;
+
+      if (!loanData.loanTitle || !loanData.category) {
+        return res
+          .status(400)
+          .send({ message: "Loan title and category are required" });
+      }
+
+      try {
+        // Default fields
+        loanData.createdAt = new Date();
+        loanData.showOnHome = loanData.showOnHome || false;
+
+        const result = await loanCollection.insertOne(loanData);
+        res.send({
+          message: "Loan created successfully",
+          insertedId: result.insertedId,
+        });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ message: "Failed to create loan" });
+      }
+    });
+
+    // Cancel loan
+    app.patch("/loan-application/cancel/:id", async (req, res) => {
+      const { id } = req.params;
+      if (!ObjectId.isValid(id))
+        return res.status(400).send({ message: "Invalid ID" });
+
+      const result = await applicationCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: { status: "Cancelled", cancelledAt: new Date() } },
+      );
+
+      if (result.matchedCount === 0)
+        return res.status(404).send({ message: "Application not found" });
+
+      res.send({ message: "Application cancelled successfully" });
+    });
   } finally {
-    // Keep client alive for serverless
+    // Do not close client
   }
 }
 
 run().catch(console.dir);
 
-module.exports = app;
+// Root
+app.get("/", (req, res) => res.send("🚀 LoanLink Server Running"));
+
+module.exports = app;               

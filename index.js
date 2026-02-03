@@ -19,13 +19,13 @@ const serviceAccount = JSON.parse(decoded);
 // --------------------
 // Middleware
 // --------------------
-app.use(express.json());
 app.use(
   cors({
-    origin: ["https://lonelink-d3167.web.app"],
+    origin: ["http://localhost:5173", "https://lonelink-d3167.web.app"],
     credentials: true,
   }),
 );
+
 
 // --------------------
 // MongoDB Setup
@@ -394,4 +394,4 @@ run().catch(console.dir);
 // Root
 app.get("/", (req, res) => res.send("🚀 LoanLink Server Running"));
 
-module.exports = app;               
+module.exports = app;

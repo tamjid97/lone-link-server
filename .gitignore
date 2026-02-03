@@ -1,3 +1,5 @@
 node_modules
 .env
 lonelink-d3167-firebase-adminsdk-fbsvc-409877217b.json
+.vercel
+.env*.local

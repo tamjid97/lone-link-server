@@ -166,6 +166,33 @@ async function run() {
       }
     });
 
+
+
+    // ----------------------
+// CREATE NEW USER (POST /users)
+// ----------------------
+app.post("/users", async (req, res) => {
+  try {
+    const user = req.body;
+
+    // Prevent duplicate email
+    const existing = await usersCollection.findOne({ email: user.email });
+    if (existing) {
+      return res.status(400).send({ message: "User already exists" });
+    }
+
+    const result = await usersCollection.insertOne(user);
+    res.send({
+      message: "User added successfully",
+      insertedId: result.insertedId,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).send({ message: "Failed to add user" });
+  }
+});
+
+
     // Suspend a user (admin action)
     app.patch("/users/suspend/:id", async (req, res) => {
       const { id } = req.params;
